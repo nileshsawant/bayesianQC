@@ -120,13 +120,12 @@ class MinimalHybrid:
         """
         np.random.seed(seed)
         
-        # Quantum encoding: 2 qubits with phase kickback
-        # Qubit 0: Ry(a*x+b) → [CNOT control] → Rx(c*x+d) → Ry(e*x+f)
+        # Quantum encoding: 2 qubits with phase kickback + Data Re-uploading
+        # Layer 1: Ry(a*x+b) → [CNOT] → Rx(c*x+d) → Ry(e*x+f)
+        # Layer 2: Ry(g*x+h) → [CNOT] → Rx(i*x+j) → Ry(k*x+l)
         # Qubit 1: X → H → [CNOT target] (ancilla in |-⟩ state)
-        # Phase kickback: qubit 1's state creates phase on qubit 0
-        # Total: 6 encoding parameters (only qubit 0 is parameterized)
-        # Increased initialization variance (0.1 -> 0.5) to explore broader feature space early
-        self.quantum_params = np.random.randn(6) * 0.5  # [a,b,c,d,e,f]
+        # Total: 12 encoding parameters (6 per layer on qubit 0)
+        self.quantum_params = np.random.randn(12) * 0.5  # [a..l]
         
         # Quantum output weights: map 4 basis states to scalar
         # |00⟩, |01⟩, |10⟩, |11⟩ → weighted combination
@@ -139,10 +138,9 @@ class MinimalHybrid:
         self.w_c = 0.0  # classical weight (slope)
         self.b_c = 0.0  # classical bias (offset)
         
-        # Momentum buffers for all 12 parameters
-        # Momentum helps smooth out noisy gradients and accelerate convergence
-        # Format: [quantum_params(6), w_q(4), w_c, b_c]
-        self.momentum = np.zeros(12)
+        # Momentum buffers for all 18 parameters
+        # Format: [quantum_params(12), w_q(4), w_c, b_c]
+        self.momentum = np.zeros(18)
         
         # GPU simulator setup
         # Tries GPU first for speed, falls back to CPU if unavailable
@@ -155,51 +153,58 @@ class MinimalHybrid:
     
     def quantum_path(self, x):
         """
-        Execute quantum path: 2-qubit entangled circuit.
+        Execute quantum path: 2-qubit entangled circuit with Data Re-uploading.
         
-        Architecture:
-        - Qubit 0: Ry-Rx-Ry encoding of input x
-        - Qubit 1: Ry-Rx-Ry encoding of input x (different parameters)
-        - CNOT(0,1): Entangles the two qubits
+        Architecture (3 Layers):
+        - Layer 1: Qubit 0 encodes x via Ry-Rx-Ry
+        - Layer 2: Qubit 0 encodes x AGAIN via Ry-Rx-Ry (Data Re-uploading)
+        - Layer 3: Qubit 0 encodes x AGAIN via Ry-Rx-Ry (Data Re-uploading)
+        - Qubit 1: Ancilla in |-⟩ state, entangled via CNOT in both layers
         
-        The CNOT creates quantum correlations between qubits:
-        - If q0 is |1⟩, flips q1
-        - Creates superposition over 4 basis states |00⟩, |01⟩, |10⟩, |11⟩
-        - Much richer feature space than single qubit
-        
-        All rotation gates affect Z-basis measurement probabilities,
-        unlike Rz which only adds global phase (invisible in measurements).
+        Data Re-uploading allows the single qubit to access higher frequency components
+        needed to fit cubic functions (Fourier series property).
         
         Args:
             x (float): Normalized input value
             
         Returns:
             tuple: (weighted_output, probabilities_dict)
-                - weighted_output: Σ w_i * P(|i⟩)
-                - probabilities_dict: {0: P(|00⟩), 1: P(|01⟩), 2: P(|10⟩), 3: P(|11⟩)}
         """
-        # Compute rotation angles for qubit 0
-        angle_q0_y1 = self.quantum_params[0] * x + self.quantum_params[1]
-        angle_q0_x = self.quantum_params[2] * x + self.quantum_params[3]
-        angle_q0_y2 = self.quantum_params[4] * x + self.quantum_params[5]
+        # Layer 1 Angles (Params 0-5)
+        l1_y1 = self.quantum_params[0] * x + self.quantum_params[1]
+        l1_x  = self.quantum_params[2] * x + self.quantum_params[3]
+        l1_y2 = self.quantum_params[4] * x + self.quantum_params[5]
         
-        # Build 2-qubit circuit with phase kickback
+        # Layer 2 Angles (Params 6-11)
+        l2_y1 = self.quantum_params[6] * x + self.quantum_params[7]
+        l2_x  = self.quantum_params[8] * x + self.quantum_params[9]
+        l2_y2 = self.quantum_params[10] * x + self.quantum_params[11]
+        
+        # Build 2-qubit circuit
         qc = QuantumCircuit(2)
         
-        # Qubit 0: First rotation
-        qc.ry(angle_q0_y1, 0)
+        # --- Layer 1 ---
+        qc.ry(l1_y1, 0)
         
-        # Qubit 1: Prepare ancilla in |-⟩ state for phase kickback
-        qc.x(1)  # |0⟩ → |1⟩
-        qc.h(1)  # |1⟩ → |-⟩ = (|0⟩ - |1⟩)/√2
+        # Prepare ancilla in |-⟩ state
+        qc.x(1)
+        qc.h(1)
         
-        # CNOT with qubit 0 as control, qubit 1 as target
-        # This creates phase kickback: the state of qubit 1 affects phase on qubit 0
+        # Entanglement 1
         qc.cx(0, 1)
         
-        # Qubit 0: Continue encoding (affected by phase kickback)
-        qc.rx(angle_q0_x, 0)
-        qc.ry(angle_q0_y2, 0)
+        qc.rx(l1_x, 0)
+        qc.ry(l1_y2, 0)
+        
+        # --- Layer 2 (Re-uploading) ---
+        # We re-apply encoding gates to access higher frequencies
+        qc.ry(l2_y1, 0)
+        
+        # Entanglement 2 (Reuse ancilla)
+        qc.cx(0, 1)
+        
+        qc.rx(l2_x, 0)
+        qc.ry(l2_y2, 0)
         
         qc.save_probabilities()
         
@@ -258,7 +263,7 @@ class MinimalHybrid:
     
     def compute_gradient(self, x, y_true, shift=np.pi/2):
         """
-        Compute gradients for all 10 parameters using hybrid approach.
+        Compute gradients for all 18 parameters using hybrid approach.
         
         Gradient Computation Strategy:
         ------------------------------
@@ -287,12 +292,12 @@ class MinimalHybrid:
             
         Returns:
             tuple: (gradient_vector, loss_value)
-                - gradient_vector: np.array of shape (12,)
+                - gradient_vector: np.array of shape (18,)
                 - loss_value: scalar MSE loss
         """
         y_pred = self.forward(x)
         loss = (y_pred - y_true)**2
-        gradient = np.zeros(12)
+        gradient = np.zeros(18)
         
         dloss_dpred = 2 * (y_pred - y_true)  # Derivative of MSE
         
@@ -303,8 +308,8 @@ class MinimalHybrid:
         # ============================================================
         # QUANTUM PARAMETER GRADIENTS (Parameter Shift Rule)
         # ============================================================
-        # For each quantum encoding parameter (6 total), evaluate circuit at θ±π/2
-        for i in range(6):
+        # For each quantum encoding parameter (12 total), evaluate circuit at θ±π/2
+        for i in range(12):
             original = self.quantum_params[i]
             
             # Forward pass with θ + π/2
@@ -328,15 +333,15 @@ class MinimalHybrid:
         # These are classical parameters acting on quantum probabilities
         # 4 basis states: |00⟩, |01⟩, |10⟩, |11⟩
         for i in range(4):
-            gradient[6 + i] = dloss_dpred * probs[i]  # ∂L/∂w_q[i]
+            gradient[12 + i] = dloss_dpred * probs[i]  # ∂L/∂w_q[i]
         
         # ============================================================
         # CLASSICAL PARAMETER GRADIENTS (Analytical)
         # ============================================================
         # Standard backpropagation through tanh activation
         dtanh = 1 - c_out**2  # Derivative of tanh
-        gradient[10] = dloss_dpred * dtanh * x  # ∂L/∂w_c
-        gradient[11] = dloss_dpred * dtanh       # ∂L/∂b_c
+        gradient[16] = dloss_dpred * dtanh * x  # ∂L/∂w_c
+        gradient[17] = dloss_dpred * dtanh       # ∂L/∂b_c
         
         return gradient, loss
 
@@ -414,17 +419,17 @@ def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9, lr_decay=0.
             model.momentum = momentum * model.momentum + (1 - momentum) * grad
             
             # Update all parameters
-            # Quantum encoding parameters (6)
-            for i in range(6):
+            # Quantum encoding parameters (12)
+            for i in range(12):
                 model.quantum_params[i] -= current_lr * model.momentum[i]
             
             # Quantum output weights (4)
             for i in range(4):
-                model.w_q[i] -= current_lr * model.momentum[6 + i]
+                model.w_q[i] -= current_lr * model.momentum[12 + i]
             
             # Classical parameters (2)
-            model.w_c -= current_lr * model.momentum[10]
-            model.b_c -= current_lr * model.momentum[11]
+            model.w_c -= current_lr * model.momentum[16]
+            model.b_c -= current_lr * model.momentum[17]
         
         # Track average loss per epoch
         avg_loss = total_loss / len(X_train)
@@ -458,16 +463,18 @@ def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9, lr_decay=0.
 
 def main():
     print("="*70)
-    print("MINIMAL HYBRID: 1 QUBIT + 1 NEURON")
+    print("MINIMAL HYBRID: CUBIC FUNCTION TEST")
     print("="*70)
     
     # Generate data
     np.random.seed(42)
     n_samples = 20
     X = np.linspace(-2, 2, n_samples)
-    y = X**2 + 1 + np.random.normal(0, 0.1, n_samples)
+    # Cubic function: y = x³ - x + 1
+    # This tests if the model can learn odd symmetry and inflection points
+    y = X**3 - X + 1 + np.random.normal(0, 0.1, n_samples)
     
-    print(f"\nData: y = x² + 1 + noise(σ=0.1)")
+    print(f"\nData: y = x³ - x + 1 + noise(σ=0.1)")
     print(f"  Samples: {n_samples}")
     print(f"  X range: [{X.min():.2f}, {X.max():.2f}]")
     print(f"  y range: [{y.min():.2f}, {y.max():.2f}]")
@@ -486,9 +493,10 @@ def main():
     # Create model
     print("\nArchitecture:")
     print("  ┌─────────────────────────────────────────────────┐")
-    print("  │ Quantum Path:  2 qubits with phase kickback    │ 10 params")
-    print("  │   Qubit 0: Ry(ax+b)→[CNOT]→Rx(cx+d)→Ry(ex+f)  │")
-    print("  │   Qubit 1: X→H→[CNOT target] (ancilla in |-⟩) │")
+    print("  │ Quantum Path:  2 qubits with Data Re-uploading │ 16 params total")
+    print("  │   Layer 1: Ry-Rx-Ry (Q0) + CNOT(0,1)          │ (12 encoding +")
+    print("  │   Layer 2: Ry-Rx-Ry (Q0) + CNOT(0,1)          │  4 output weights)")
+    print("  │   Qubit 1: Ancilla in |-⟩ state               │")
     print("  │      ↓                                          │")
     print("  │   Output: Σ wᵢ·P(|i⟩) for |00⟩,|01⟩,|10⟩,|11⟩ │")
     print("  └─────────────────────────────────────────────────┘")
@@ -496,7 +504,7 @@ def main():
     print("  │ Classical Path: x → tanh(w·x + b)              │  2 params")
     print("  └─────────────────────────────────────────────────┘")
     print("  Output: quantum + classical")
-    print(f"  Total: 12 parameters (6 encoding + 4 output + 2 classical)")
+    print(f"  Total: 18 parameters (12 encoding + 4 output + 2 classical)")
     
     model = MinimalHybrid(seed=42)
     
@@ -507,10 +515,10 @@ def main():
     
     # Train
     start_time = time.time()
-    # Optimized training: 30 epochs with aggressive learning rate decay
-    # Strategy: High initial LR (0.15) to escape plateau, low momentum (0.7) for agility,
-    # fast decay (0.92) to settle quickly.
-    losses = train(model, X_scaled, y_scaled, epochs=30, lr=0.15, momentum=0.7, lr_decay=0.92)
+    # Optimized training: 30 epochs with tuned hyperparameters
+    # Strategy: High initial LR (0.15) to escape plateau, higher momentum (0.8) for stability,
+    # slower decay (0.94) to keep learning longer.
+    losses = train(model, X_scaled, y_scaled, epochs=30, lr=0.15, momentum=0.8, lr_decay=0.94)
     train_time = time.time() - start_time
     
     # Evaluate
@@ -568,7 +576,7 @@ def main():
     axes[0,1].plot(X, predictions, 'r-', linewidth=2, label='Hybrid', zorder=2)
     
     X_dense = np.linspace(-2, 2, 100)
-    y_true = X_dense**2 + 1
+    y_true = X_dense**3 - X_dense + 1
     axes[0,1].plot(X_dense, y_true, 'g--', linewidth=1.5, alpha=0.5, 
                    label='True', zorder=1)
     
@@ -607,8 +615,8 @@ def main():
     
     print("\n" + "="*70)
     print("Summary:")
-    print(f"  • 2-qubit phase kickback architecture: 12 params")
-    print(f"  • Quantum: Qubit 0 (Ry-Rx-Ry) + CNOT + Qubit 1 (X-H ancilla)")
+    print(f"  • 2-qubit phase kickback architecture: 18 params")
+    print(f"  • Quantum: Qubit 0 (Ry-Rx-Ry) x 2 layers + CNOT + Qubit 1 (X-H ancilla)")
     print(f"  • Phase kickback: ancilla in |-⟩ creates phase on qubit 0")
     print(f"  • Output: 4 basis states |00⟩, |01⟩, |10⟩, |11⟩")
     print(f"  • Classical: tanh learns residual linear trends")

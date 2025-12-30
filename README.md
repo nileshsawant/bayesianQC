@@ -18,7 +18,7 @@ Both implementations are built from scratch using only `numpy` and `qiskit` to d
 2. [Hybrid Quantum-Classical Neural Network](#hybrid-quantum-classical-neural-network-minimal_hybridpy)
    - Quantum feature mapping + classical residual learning
    - Parameter shift rule for exact gradients
-   - Example: $y = x^2 + 1 + \epsilon$
+   - Example: $y = x^3 - x + 1 + \epsilon$
 
 ---
 
@@ -259,25 +259,26 @@ python minimal_hybrid.py
 
 ### Results
 
-**Test Function**: $y = x^2 + 1 + \epsilon$, where $\epsilon \sim \mathcal{N}(0, 0.1)$
+**Test Function**: $y = x^3 - x + 1 + \epsilon$ (Cubic), where $\epsilon \sim \mathcal{N}(0, 0.1)$
 
 #### Architecture Evolution
 
-We tested three quantum architectures to find what works:
+We tested multiple quantum architectures to find what works:
 
 | Architecture | Params | R² | Quantum std | Training Time | Notes |
 |--------------|--------|-----|-------------|---------------|-------|
-| 1Q: Ry-Rx-Ry | 10 | 0.35 | 0.125 | ~10 min | Baseline - all gates affect measurement |
+| 1Q: Ry-Rx-Ry | 10 | 0.35 | 0.125 | ~10 min | Baseline (Quadratic task) |
 | 2Q: Standard CNOT | 18 | -0.18 | 0.007 | ~19 min | Failed - nearly constant output |
-| 2Q: Phase Kickback | 12 | 0.71 | 0.414 | ~11 min | Strong quantum advantage |
-| **2Q: Optimized Kickback** | **12** | **0.80** | **0.790** | **~11 min** | **Larger init + LR decay = Best Result** |
+| 2Q: Phase Kickback | 12 | 0.80 | 0.790 | ~11 min | Solved Quadratic task |
+| **2Q: Data Re-uploading** | **18** | **0.84** | **0.449** | **~12 min** | **Solved Cubic task (2 layers)** |
 
-#### Current Best: Optimized Phase Kickback Architecture
+#### Current Best: Data Re-uploading Architecture (2 Layers)
 
 ```
 ┌─ QUANTUM PATH ─────────────────────────────────┐
-│ Qubit 0: Ry(ax+b) → [CNOT] → Rx(cx+d) → Ry(ex+f) │  6 params
-│ Qubit 1: X → H → [CNOT target] (ancilla in |-⟩) │  0 params
+│ Layer 1: Ry-Rx-Ry (Q0) + CNOT(0,1)             │  6 params
+│ Layer 2: Ry-Rx-Ry (Q0) + CNOT(0,1)             │  6 params
+│ Qubit 1: Ancilla in |-⟩ state (reused)         │  0 params
 │     Output: Σ wᵢ·P(|i⟩) for |00⟩,|01⟩,|10⟩,|11⟩  │  4 params
 └─────────────────────────────────────────────────┘
 
@@ -285,29 +286,20 @@ We tested three quantum architectures to find what works:
 │ x → tanh(w_c·x + b_c)                          │  2 params
 └─────────────────────────────────────────────────┘
 
-Total Parameters: 12 (vs 10 for 1-qubit)
+Total Parameters: 18 (12 encoding + 4 output + 2 classical)
 ```
 
-**Performance** (50 epochs, 20 samples):
-- **R² Score**: 0.80 (80% improvement over baseline)
-- **MSE**: 0.34 (vs baseline 1.72)
-- **Training Time**: ~11 minutes on GPU (H100)
+**Performance** (30 epochs, 20 samples):
+- **R² Score**: 0.84 (Solved Cubic Problem)
+- **MSE**: 0.90 (vs baseline 5.74)
+- **Training Time**: ~12 minutes on GPU
 
 **Path Contributions**:
-- Quantum: mean=0.58, std=0.79 (Very strong contribution)
-- Classical: mean=-0.67, std=0.12 (Minor adjustment)
+- Quantum: mean=0.19, std=0.45 (Captures non-linear cubic "wiggles")
+- Classical: mean=-0.18, std=0.65 (Captures linear trend)
 
-**Optimization Strategy**:
-- **Larger Initialization**: `std=0.5` (vs 0.1) allowed exploring broader feature space early
-- **Aggressive LR Decay**: `lr=0.1` decaying by 0.95/epoch forced fast convergence then fine-tuning
-- **Result**: Quantum path took over as the primary driver (std 0.79 vs classical 0.12)
-
-**Learned Output Weights**: [-0.65, 1.49, -0.65, 1.49]
-- Symmetric pattern shows phase kickback creates meaningful features
-- States |01⟩ and |11⟩ dominate (second qubit=1)
-- States |00⟩ and |10⟩ suppressed (second qubit=0)
-
-**Key Discovery**: Phase kickback creates **quantum advantage**! The ancilla qubit in |-⟩ state kicks back phase onto qubit 0, making subsequent rotations input-dependent in a fundamentally non-classical way. This doubles R² compared to single qubit, with only 2 extra parameters.
+**Key Discovery**: **Data Re-uploading** increases frequency capacity!
+A single encoding layer can only fit simple sine waves. By re-uploading the input $x$ in a second layer, the quantum circuit can generate higher-frequency harmonics (like $\sin(2x)$) needed to approximate the cubic function $x^3$. This jumped R² from 0.49 (1 layer) to 0.84 (2 layers).
 
 ![Minimal Hybrid Result](minimal_hybrid_result.png)
 
@@ -354,13 +346,13 @@ Both implementations demonstrate fundamental machine learning concepts built fro
 
 ### Key Takeaways
 
-1. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding - this is the key to 2.3× R² improvement
-2. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential (R² 0.71 → 0.80)
-3. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
-4. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit
-5. **Scaling Matters**: Both paths must operate on similar scales for effective training
-6. **Minimal is Powerful**: 12 parameters (hybrid QNN) achieve 80% R² improvement
-7. **Quantum ≠ Magic**: Quantum provides phase-based conditional feature spaces - not unlimited expressiveness
+1. **Data Re-uploading is Essential for Complexity**: To fit cubic functions ($x^3$), you need multiple encoding layers. Each re-uploading adds frequency components to the Fourier series approximation.
+2. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding.
+3. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential.
+4. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
+5. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit.
+6. **Scaling Matters**: Both paths must operate on similar scales for effective training.
+7. **Minimal is Powerful**: 18 parameters (hybrid QNN) achieve 84% R² on cubic data.
 
 ---
 
