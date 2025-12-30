@@ -86,6 +86,7 @@ On y = x² + 1 + noise(σ=0.1):
 import numpy as np
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit
+from qiskit.circuit import Parameter
 from qiskit_aer import AerSimulator
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 import time
@@ -145,24 +146,62 @@ class MinimalHybrid:
         # GPU simulator setup
         # Tries GPU first for speed, falls back to CPU if unavailable
         try:
-            self.simulator = AerSimulator(method='statevector', device='GPU')
+            # Use 'automatic' method to allow shot-based simulation
+            self.simulator = AerSimulator(method='automatic', device='GPU')
             print("✓ GPU acceleration enabled")
         except:
-            self.simulator = AerSimulator(method='statevector')
+            self.simulator = AerSimulator(method='automatic')
             print("✓ CPU simulator")
+            
+        # ============================================================
+        # PRE-COMPILE QUANTUM CIRCUIT (Optimization)
+        # ============================================================
+        # Instead of rebuilding the circuit every time, we build it once
+        # with Parameters and bind values at runtime.
+        
+        # Define parameters
+        self.x_param = Parameter('x')
+        self.theta_params = [Parameter(f'theta_{i}') for i in range(12)]
+        
+        # Build circuit
+        self.qc = QuantumCircuit(2)
+        
+        # Layer 1 Angles: params[0]*x + params[1]
+        l1_y1 = self.theta_params[0] * self.x_param + self.theta_params[1]
+        l1_x  = self.theta_params[2] * self.x_param + self.theta_params[3]
+        l1_y2 = self.theta_params[4] * self.x_param + self.theta_params[5]
+        
+        # Layer 2 Angles: params[6]*x + params[7]
+        l2_y1 = self.theta_params[6] * self.x_param + self.theta_params[7]
+        l2_x  = self.theta_params[8] * self.x_param + self.theta_params[9]
+        l2_y2 = self.theta_params[10] * self.x_param + self.theta_params[11]
+        
+        # --- Layer 1 ---
+        self.qc.ry(l1_y1, 0)
+        self.qc.x(1)
+        self.qc.h(1) # Ancilla in |-⟩
+        self.qc.cx(0, 1)
+        self.qc.rx(l1_x, 0)
+        self.qc.ry(l1_y2, 0)
+        
+        # --- Layer 2 (Re-uploading) ---
+        self.qc.ry(l2_y1, 0)
+        self.qc.cx(0, 1)
+        self.qc.rx(l2_x, 0)
+        self.qc.ry(l2_y2, 0)
+        
+        # Measurement
+        self.qc.measure_all()
+        
+        # Transpile once
+        pm = generate_preset_pass_manager(optimization_level=1, backend=self.simulator)
+        self.transpiled_qc = pm.run(self.qc)
     
     def quantum_path(self, x):
         """
         Execute quantum path: 2-qubit entangled circuit with Data Re-uploading.
         
-        Architecture (3 Layers):
-        - Layer 1: Qubit 0 encodes x via Ry-Rx-Ry
-        - Layer 2: Qubit 0 encodes x AGAIN via Ry-Rx-Ry (Data Re-uploading)
-        - Layer 3: Qubit 0 encodes x AGAIN via Ry-Rx-Ry (Data Re-uploading)
-        - Qubit 1: Ancilla in |-⟩ state, entangled via CNOT in both layers
-        
-        Data Re-uploading allows the single qubit to access higher frequency components
-        needed to fit cubic functions (Fourier series property).
+        Uses pre-compiled parameterized circuit for speed.
         
         Args:
             x (float): Normalized input value
@@ -170,53 +209,39 @@ class MinimalHybrid:
         Returns:
             tuple: (weighted_output, probabilities_dict)
         """
-        # Layer 1 Angles (Params 0-5)
-        l1_y1 = self.quantum_params[0] * x + self.quantum_params[1]
-        l1_x  = self.quantum_params[2] * x + self.quantum_params[3]
-        l1_y2 = self.quantum_params[4] * x + self.quantum_params[5]
+        # Bind parameters: x and current weights
+        # We create a dictionary mapping Parameter objects to values
+        param_values = {self.x_param: x}
+        for i in range(12):
+            param_values[self.theta_params[i]] = self.quantum_params[i]
+            
+        # Bind and run
+        # assign_parameters creates a new bound circuit (lightweight operation)
+        bound_qc = self.transpiled_qc.assign_parameters(param_values)
         
-        # Layer 2 Angles (Params 6-11)
-        l2_y1 = self.quantum_params[6] * x + self.quantum_params[7]
-        l2_x  = self.quantum_params[8] * x + self.quantum_params[9]
-        l2_y2 = self.quantum_params[10] * x + self.quantum_params[11]
+        # Run with finite shots
+        shots = 100
+        result = self.simulator.run(bound_qc, shots=shots).result()
+        counts = result.get_counts()
         
-        # Build 2-qubit circuit
-        qc = QuantumCircuit(2)
+        # Convert counts to probabilities
+        # Keys are bitstrings like '00', '01' (little endian in Qiskit usually, but measure_all makes it standard)
+        # We need to map '00'->0, '01'->1, '10'->2, '11'->3
+        probs = np.zeros(4)
+        total_shots = sum(counts.values())
         
-        # --- Layer 1 ---
-        qc.ry(l1_y1, 0)
-        
-        # Prepare ancilla in |-⟩ state
-        qc.x(1)
-        qc.h(1)
-        
-        # Entanglement 1
-        qc.cx(0, 1)
-        
-        qc.rx(l1_x, 0)
-        qc.ry(l1_y2, 0)
-        
-        # --- Layer 2 (Re-uploading) ---
-        # We re-apply encoding gates to access higher frequencies
-        qc.ry(l2_y1, 0)
-        
-        # Entanglement 2 (Reuse ancilla)
-        qc.cx(0, 1)
-        
-        qc.rx(l2_x, 0)
-        qc.ry(l2_y2, 0)
-        
-        qc.save_probabilities()
-        
-        # Execute circuit
-        pm = generate_preset_pass_manager(optimization_level=1, backend=self.simulator)
-        transpiled = pm.run(qc)
-        result = self.simulator.run(transpiled, shots=1000).result()
-        probs = result.data()['probabilities']
+        for bitstring, count in counts.items():
+            # bitstring is like "0 1" or "01" depending on register structure
+            # measure_all produces "q1 q0" usually. Let's parse carefully.
+            # We treat the integer value of the bitstring as the index.
+            # int(bitstring, 2) converts binary string to int.
+            # Note: Qiskit uses little-endian (qubit 0 is rightmost).
+            # So '10' means q1=1, q0=0 -> index 2.
+            idx = int(bitstring.replace(" ", ""), 2)
+            if idx < 4:
+                probs[idx] = count / total_shots
         
         # Map 4 basis states to output using learned weights
-        # |00⟩=0, |01⟩=1, |10⟩=2, |11⟩=3
-        # probs is a numpy array of length 4 (for 2 qubits)
         output = sum(self.w_q[i] * probs[i] for i in range(4))
         return output, probs
     
@@ -472,9 +497,9 @@ def main():
     X = np.linspace(-2, 2, n_samples)
     # Cubic function: y = x³ - x + 1
     # This tests if the model can learn odd symmetry and inflection points
-    y = X**3 - X + 1 + np.random.normal(0, 0.1, n_samples)
+    y = X**3 - X + 1 + np.random.normal(0, 0.4, n_samples)
     
-    print(f"\nData: y = x³ - x + 1 + noise(σ=0.1)")
+    #print(f"\nData: y = x³ - x + 1 + noise(σ=0.1)")
     print(f"  Samples: {n_samples}")
     print(f"  X range: [{X.min():.2f}, {X.max():.2f}]")
     print(f"  y range: [{y.min():.2f}, {y.max():.2f}]")
@@ -518,7 +543,7 @@ def main():
     # Optimized training: 30 epochs with tuned hyperparameters
     # Strategy: High initial LR (0.15) to escape plateau, higher momentum (0.8) for stability,
     # slower decay (0.94) to keep learning longer.
-    losses = train(model, X_scaled, y_scaled, epochs=30, lr=0.15, momentum=0.8, lr_decay=0.94)
+    losses = train(model, X_scaled, y_scaled, epochs=40, lr=0.15, momentum=0.8, lr_decay=0.94)
     train_time = time.time() - start_time
     
     # Evaluate

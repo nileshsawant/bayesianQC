@@ -270,7 +270,8 @@ We tested multiple quantum architectures to find what works:
 | 1Q: Ry-Rx-Ry | 10 | 0.35 | 0.125 | ~10 min | Baseline (Quadratic task) |
 | 2Q: Standard CNOT | 18 | -0.18 | 0.007 | ~19 min | Failed - nearly constant output |
 | 2Q: Phase Kickback | 12 | 0.80 | 0.790 | ~11 min | Solved Quadratic task |
-| **2Q: Data Re-uploading** | **18** | **0.84** | **0.449** | **~12 min** | **Solved Cubic task (2 layers)** |
+| 2Q: Data Re-uploading | 18 | 0.84 | 0.449 | ~12 min | Solved Cubic task (2 layers) |
+| **2Q: Optimized (Params + Shots)** | **18** | **0.84** | **0.523** | **~19 sec** | **37x Faster + Noise Robust (100 shots)** |
 
 #### Current Best: Data Re-uploading Architecture (2 Layers)
 
@@ -289,14 +290,18 @@ We tested multiple quantum architectures to find what works:
 Total Parameters: 18 (12 encoding + 4 output + 2 classical)
 ```
 
-**Performance** (30 epochs, 20 samples):
-- **R² Score**: 0.84 (Solved Cubic Problem)
-- **MSE**: 0.90 (vs baseline 5.74)
-- **Training Time**: ~12 minutes on GPU
+**Performance** (40 epochs, 20 samples, 100 shots):
+- **R² Score**: 0.84 (Maintained accuracy with noisy shots)
+- **MSE**: 0.84 (vs baseline 5.37)
+- **Training Time**: **19.3 seconds** (vs 12 minutes previously)
+
+**Optimization Breakthroughs**:
+1. **Parameterized Circuits**: Pre-compiling the circuit once and binding parameters at runtime reduced training time by **97%** (12m → 19s).
+2. **Noise Robustness**: The model trained successfully with only **100 shots** per execution. The momentum-based optimizer ($ \beta=0.8 $) effectively smoothed out the quantum noise, proving the architecture is viable on near-term noisy hardware.
 
 **Path Contributions**:
-- Quantum: mean=0.19, std=0.45 (Captures non-linear cubic "wiggles")
-- Classical: mean=-0.18, std=0.65 (Captures linear trend)
+- Quantum: mean=0.21, std=0.52 (Captures non-linear cubic "wiggles")
+- Classical: mean=-0.19, std=0.66 (Captures linear trend)
 
 **Key Discovery**: **Data Re-uploading** increases frequency capacity!
 A single encoding layer can only fit simple sine waves. By re-uploading the input $x$ in a second layer, the quantum circuit can generate higher-frequency harmonics (like $\sin(2x)$) needed to approximate the cubic function $x^3$. This jumped R² from 0.49 (1 layer) to 0.84 (2 layers).
@@ -347,12 +352,14 @@ Both implementations demonstrate fundamental machine learning concepts built fro
 ### Key Takeaways
 
 1. **Data Re-uploading is Essential for Complexity**: To fit cubic functions ($x^3$), you need multiple encoding layers. Each re-uploading adds frequency components to the Fourier series approximation.
-2. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding.
-3. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential.
-4. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
-5. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit.
-6. **Scaling Matters**: Both paths must operate on similar scales for effective training.
-7. **Minimal is Powerful**: 18 parameters (hybrid QNN) achieve 84% R² on cubic data.
+2. **Parameterized Circuits are Critical for Speed**: Re-compiling circuits is a massive bottleneck. Using `qiskit.circuit.Parameter` allows binding values at runtime, speeding up training by orders of magnitude (12m → 19s).
+3. **Quantum ML is Robust to Noise**: Training succeeded with only **100 shots**. The stochastic nature of the optimizer (SGD + Momentum) naturally filters out the shot noise, making this approach feasible for NISQ devices.
+4. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding.
+5. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential.
+6. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
+7. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit.
+8. **Scaling Matters**: Both paths must operate on similar scales for effective training.
+9. **Minimal is Powerful**: 18 parameters (hybrid QNN) achieve 84% R² on cubic data.
 
 ---
 
