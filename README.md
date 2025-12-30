@@ -11,77 +11,19 @@ Both implementations are built from scratch using only `numpy` and `qiskit` to d
 ## Table of Contents
 
 1. [Bayesian Neural Network](#bayesian-neural-network-from-scratch)
-   - Uncertainty quantification via MCMC sampling
-   - Hierarchical Bayes for noise inference
-   - Example: $y = x^3 + \epsilon$
-
 2. [Hybrid Quantum-Classical Neural Network](#hybrid-quantum-classical-neural-network-minimal_hybridpy)
-   - Quantum feature mapping + classical residual learning
-   - Parameter shift rule for exact gradients
-   - Example: $y = x^3 - x + 1 + \epsilon$
+3. [Citation](#citation)
 
 ---
 
 ## Bayesian Neural Network 
 
-This repository contains a "bare minimum" implementation of a Bayesian Neural Network (BNN) using only `numpy`. It demonstrates how to perform Bayesian inference on neural network weights without relying on deep learning frameworks like PyTorch or TensorFlow.
+This repository contains a "bare minimum" implementation of a Bayesian Neural Network (BNN) using only `numpy`. It demonstrates how to perform Bayesian inference on neural network weights without relying on deep learning frameworks.
 
-## Overview
+### Key Concepts
 
-The goal of this project is to demystify Bayesian Deep Learning by building the core algorithms from scratch. It highlights the fundamental difference between **Optimization** (Standard NN) and **Integration/Sampling** (Bayesian NN).
-
-## Key Concepts
-
-### 1. Standard vs. Bayesian Neural Networks
-*   **Standard NN (Optimization)**: Uses Gradient Descent to slide downhill and find the single "best" set of weights (Maximum Likelihood). It asks: *"What is the absolute lowest error?"*
-*   **Bayesian NN (Sampling)**: Uses MCMC to explore the probability landscape. It learns the **Posterior Distribution** $P(w|D)$ of all plausible weights given the data. It asks: *"What is the volume of good solutions?"*
-
-**Benefits:**
-*   **Uncertainty Quantification**: The model tells you when it is "guessing" (high variance in predictions).
-*   **Robustness**: Averaging over thousands of models (ensemble) prevents overfitting.
-*   **Safety**: Critical for high-stakes applications (medical, automotive) where knowing *what you don't know* is essential.
-
-### 2. The Algorithm: Metropolis-Hastings MCMC
-Since we cannot calculate the posterior distribution analytically (the denominator $P(D)$ is intractable), we use **Markov Chain Monte Carlo (MCMC)**.
-1.  **Propose**: Make a small random jump in parameter space.
-2.  **Evaluate**: Check if the new position is more probable using Bayes' Rule (Likelihood $\times$ Prior).
-3.  **Accept/Reject**: If more probable, move there. If less probable, move there with probability $p$.
-4.  **Repeat**: Over time, the samples map out the true distribution.
-
-### 3. Hierarchical Bayes (Automatic Noise Inference)
-In real-world problems, we don't know the true noise level of the data. This implementation uses **Hierarchical Bayes**:
-*   We treat the noise standard deviation ($\sigma$) as an unknown parameter, just like the weights.
-*   The state vector is $\theta = \{w_1, w_2, ..., w_{16}, \log \sigma\}$.
-*   The model automatically infers the noise level that best balances fitting the data vs. satisfying the prior.
-
-### 4. Mathematical Details
-
-We use **Log-Probabilities** for numerical stability. The MCMC acceptance ratio relies on the ratio of probabilities, so constant normalizing factors cancel out.
-
-#### Log Prior
-We assume a Gaussian Prior on the parameters $\theta$:
-$$ P(\theta) = \frac{1}{\sqrt{2\pi}} e^{-\frac{1}{2}\theta^2} $$
-
-Taking the log:
-$$ \log P(\theta) = \log\left(\frac{1}{\sqrt{2\pi}}\right) - \frac{1}{2}\theta^2 $$
-
-In the code (`log_prior`), we drop the constant term $\log(1/\sqrt{2\pi})$ because it is the same for all $\theta$ and cancels out in the MCMC ratio.
-$$ \text{Code: } \texttt{lp} = -0.5 * \sum \theta^2 $$
-
-#### Log Likelihood
-We assume the data $y$ comes from a Gaussian distribution centered at the network prediction $\hat{y}$ with noise $\sigma$:
-$$ P(D|\theta) = \prod_{i=1}^{N} \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{(y_i - \hat{y}_i)^2}{2\sigma^2}} $$
-
-Taking the log:
-$$ \log P(D|\theta) = \sum_{i=1}^{N} \left[ -\log(\sigma) - \log(\sqrt{2\pi}) - \frac{(y_i - \hat{y}_i)^2}{2\sigma^2} \right] $$
-$$ \log P(D|\theta) = -N\log(\sigma) - \frac{N}{2}\log(2\pi) - \frac{1}{2\sigma^2}\sum (y_i - \hat{y}_i)^2 $$
-
-In the code (`log_likelihood`):
-*   We **drop** $-\frac{N}{2}\log(2\pi)$ (Constant).
-*   We **KEEP** $-N\log(\sigma)$ because $\sigma$ is a parameter we are sampling (it changes!).
-$$ \text{Code: } \texttt{ll} = -N \log(\sigma) - 0.5 \frac{\text{SSE}}{\sigma^2} $$
-
-## The Code (`simple_bnn_example.py`)
+*   **Standard NN (Optimization)**: Uses Gradient Descent to find the single "best" set of weights.
+*   **Bayesian NN (Sampling)**: Uses MCMC to explore the probability landscape and learn the **Posterior Distribution** $P(w|D)$.
 
 ### Architecture
 *   **Input**: 1 dimension
@@ -89,42 +31,11 @@ $$ \text{Code: } \texttt{ll} = -N \log(\sigma) - 0.5 \frac{\text{SSE}}{\sigma^2}
 *   **Output**: 1 dimension
 *   **Total Parameters**: 17 (16 weights + 1 noise parameter)
 
-### Implementation Details
-*   **Log-Likelihood**: Gaussian likelihood. Includes the $-N \log(\sigma)$ term to penalize "explaining away" error with infinite noise.
-*   **Log-Prior**: 
-    *   Gaussian prior on weights (equivalent to L2 regularization).
-    *   Gaussian prior on $\log \sigma$ (weak belief that noise is around 1.0).
-*   **Sampling**: 
-    *   50,000 iterations.
-    *   **Burn-in**: First 10,000 samples discarded to allow convergence.
-    *   **Thinning**: Every 10th sample kept to reduce correlation.
-
-## Usage
-
-Run the script directly with Python:
+### Usage
 
 ```bash
 python simple_bnn_example.py
 ```
-
-## Results
-
-The script outputs the inferred statistics and generates a plot `simple_bnn_example.png`.
-
-**Example Output:**
-```text
-Posterior Statistics:
----------------------
-Inferred Noise Std: 1.037 +/- 0.129
-(True Noise Std used for generation: 1.0)
-```
-
-**Visualization:**
-*   **Blue Dots**: Noisy training data ($y = x^3 + \epsilon$).
-*   **Red Line**: The mean prediction of the Bayesian ensemble.
-*   **Red Shading**: The uncertainty ($\pm 2\sigma$). Notice how the model becomes uncertain (shading widens) in regions where there is no data.
-
-![BNN Result Plot](simple_bnn_example.png)
 
 ---
 
@@ -139,117 +50,43 @@ A minimal implementation demonstrating how quantum computing can be integrated w
 
 ### Architecture
 
+The model uses a parallel hybrid architecture where the final prediction is the sum of a quantum circuit output and a classical neural network output.
+
 ```
 Input: x (normalized scalar)
 
-┌─ QUANTUM PATH ─────────────────────────────────┐
-│ x → Ry(ax+b) → Rx(cx+d) → Ry(ex+f)            │  6 params
-│            ↓                                    │
-│     Measure in Z-basis → P(|0⟩), P(|1⟩)       │
-│            ↓                                    │
-│     Output: w_q0·P(|0⟩) + w_q1·P(|1⟩)         │  2 params
+┌─ QUANTUM PATH (2 Layers) ──────────────────────┐
+│ Layer 1: Ry(ax+b) → [CNOT] → Rx(cx+d) → Ry(ex+f)
+│ Layer 2: Ry(gx+h) → [CNOT] → Rx(ix+j) → Ry(kx+l)
+│            ↓                                    
+│     Measure in Z-basis → P(|00⟩)...P(|11⟩)      
+│            ↓                                    
+│     Output: Σ w_qi · P(|i⟩)                   
+│     (Weighted sum of basis state probabilities)
 └─────────────────────────────────────────────────┘
 
 ┌─ CLASSICAL PATH ───────────────────────────────┐
-│ x → tanh(w_c·x + b_c)                          │  2 params
+│ x → tanh(w_c·x + b_c)                          │
 └─────────────────────────────────────────────────┘
 
 Final Output: quantum_output + classical_output
-Total Parameters: 10
+Total Parameters: 18
 ```
 
-### Key Insights
+### Key Components
 
-#### 1. **Phase Kickback Creates Quantum Advantage**
-The winning architecture uses an ancilla qubit in |-⟩ state:
-- **Setup**: X → H on qubit 1 creates |-⟩ = (|0⟩ - |1⟩)/√2
-- **CNOT timing**: Applied *during* qubit 0's encoding (not after)
-- **Effect**: Phase kickback makes subsequent rotations on qubit 0 conditionally dependent on its own state
-- **Result**: Non-classical correlations that classical circuits cannot efficiently replicate
+#### 1. Data Re-uploading
+The input $x$ is encoded into the quantum circuit multiple times (in two layers). This allows the quantum circuit to approximate more complex functions (like cubic polynomials) by increasing the available frequency spectrum of the output.
 
-This differs from standard entanglement approaches where both qubits are encoded independently before entangling.
+#### 2. Phase Kickback
+The architecture uses a 2-qubit system where the second qubit acts as an ancilla in the $|-\rangle$ state. Applying CNOT gates during the encoding process creates "phase kickback," introducing conditional dynamics that enhance the expressivity of the circuit beyond simple single-qubit rotations.
 
-#### 2. **Gate Selection Matters**
-The quantum circuit uses **Ry-Rx-Ry** pattern because:
-- All three rotations affect Z-basis measurement outcomes
-- **Rz does NOT** (it only adds global phase, invisible in measurements!)
-- This was discovered during experimentation: Ry-Rz-Ry failed to train
+#### 3. Classical Residual Connection
+A parallel classical path (a single neuron with `tanh` activation) is added to handle linear trends and offsets. This allows the quantum circuit to focus on learning the complex, non-linear parts of the data (the "wiggles"), while the classical path handles the broad strokes.
 
-#### 3. **Entanglement Strategy is Critical**
-Three approaches tested:
-- **No entanglement** (1-qubit): Good baseline, limited expressiveness
-- **Standard CNOT** (both qubits encoded → CNOT): Failed completely (quantum std=0.007)
-- **Phase kickback** (CNOT during encoding): Best performance (quantum std=0.414)
-
-The key insight: *when* you apply CNOT matters as much as *whether* you apply it.
-
-#### 4. **Normalized Inputs**
-Both paths operate on standardized data (mean=0, std=1):
-- Prevents scale mismatch between quantum and classical contributions
-- Quantum probabilities bounded to [0,1], classical tanh bounded to [-1,1]
-- Ensures fair competition during joint training
-
-#### 5. **Complementary Learning**
-The architecture naturally divides labor:
-- **Quantum**: Learns bounded, periodic, non-linear patterns (via rotations)
-- **Classical**: Learns linear trends and offsets (via tanh neuron)
-- **Result**: Better performance than either alone
-
-#### 6. **Parameter Shift Rule**
-Quantum gradients computed exactly (not finite difference):
-$$\frac{\partial L}{\partial \theta} = \frac{L(\theta + \pi/2) - L(\theta - \pi/2)}{2}$$
-
-This is:
-- Exact (no approximation error)
-- Works for any quantum gate with eigenvalues ±1
-- Requires 2 circuit evaluations per parameter
-
-### Mathematical Details
-
-**Phase Kickback Circuit:**
-
-For the phase kickback architecture with 2 qubits:
-
-1. **Initial state**: $|00\rangle$
-
-2. **Qubit 0 first rotation**: $R_y(ax+b) |0\rangle \otimes |0\rangle$
-
-3. **Qubit 1 ancilla prep**: $R_y(ax+b) |0\rangle \otimes X H |0\rangle = R_y(ax+b) |0\rangle \otimes |-\rangle$
-
-4. **CNOT**: Creates phase kickback - the |-⟩ state kicks back phase to qubit 0
-
-5. **Qubit 0 remaining rotations**: $R_y(ex+f) R_x(cx+d) \text{CNOT}_{0 \to 1} R_y(ax+b) |0\rangle \otimes |-\rangle$
-
-The final state probabilities:
-$$P(|00\rangle), P(|01\rangle), P(|10\rangle), P(|11\rangle)$$
-
-Quantum output:
-$$y_{\text{quantum}} = \sum_{i=0}^{3} w_{i} \cdot P(|i\rangle)$$
-
-Classical output:
-$$y_{\text{classical}} = \tanh(w_c \cdot x + b_c)$$
-
-Total prediction:
-$$y_{\text{pred}} = y_{\text{quantum}} + y_{\text{classical}}$$
-
-**Why Phase Kickback Works:**
-
-The ancilla in $|-\rangle$ state has a relative phase between $|0\rangle$ and $|1\rangle$. When CNOT is applied with qubit 0 as control:
-- If qubit 0 is in superposition (after first $R_y$), the CNOT conditionally flips the ancilla
-- The ancilla's phase difference kicks back onto qubit 0's amplitude
-- Subsequent rotations on qubit 0 now depend on this kicked-back phase
-- This creates **conditional dynamics** that cannot be factored into independent qubit operations
-
-This is fundamentally different from classical feature engineering because the phase information is global and cannot be computed by processing qubits separately.
-
-### Training
-
-- **Loss**: Mean Squared Error (MSE)
-- **Optimizer**: Gradient Descent with Momentum (β=0.9)
-- **Quantum gradients**: Parameter shift rule
-- **Classical gradients**: Analytical backpropagation
-- **Gradient clipping**: Norm clipped to 1.0 for stability
-- **Learning rate**: 0.05 (fixed)
+#### 4. Parameter Shift Rule
+Gradients for the quantum parameters are computed exactly using the parameter shift rule:
+$$ \frac{\partial L}{\partial \theta} = \frac{L(\theta + \pi/2) - L(\theta - \pi/2)}{2} $$
 
 ### Usage
 
@@ -257,146 +94,25 @@ This is fundamentally different from classical feature engineering because the p
 python minimal_hybrid.py
 ```
 
-### Results
-
-**Test Function**: $y = x^3 - x + 1 + \epsilon$ (Cubic), where $\epsilon \sim \mathcal{N}(0, 0.1)$
-
-#### Architecture Evolution
-
-We tested multiple quantum architectures to find what works:
-
-| Architecture | Params | R² | Quantum std | Training Time | Notes |
-|--------------|--------|-----|-------------|---------------|-------|
-| 1Q: Ry-Rx-Ry | 10 | 0.35 | 0.125 | ~10 min | Baseline (Quadratic task) |
-| 2Q: Standard CNOT | 18 | -0.18 | 0.007 | ~19 min | Failed - nearly constant output |
-| 2Q: Phase Kickback | 12 | 0.80 | 0.790 | ~11 min | Solved Quadratic task |
-| 2Q: Data Re-uploading | 18 | 0.84 | 0.449 | ~12 min | Solved Cubic task (2 layers) |
-| **2Q: Optimized (Params + Shots)** | **18** | **0.84** | **0.523** | **~19 sec** | **37x Faster + Noise Robust (100 shots)** |
-
-#### Current Best: Data Re-uploading Architecture (2 Layers)
-
-```
-┌─ QUANTUM PATH ─────────────────────────────────┐
-│ Layer 1: Ry-Rx-Ry (Q0) + CNOT(0,1)             │  6 params
-│ Layer 2: Ry-Rx-Ry (Q0) + CNOT(0,1)             │  6 params
-│ Qubit 1: Ancilla in |-⟩ state (reused)         │  0 params
-│     Output: Σ wᵢ·P(|i⟩) for |00⟩,|01⟩,|10⟩,|11⟩  │  4 params
-└─────────────────────────────────────────────────┘
-
-┌─ CLASSICAL PATH ───────────────────────────────┐
-│ x → tanh(w_c·x + b_c)                          │  2 params
-└─────────────────────────────────────────────────┘
-
-Total Parameters: 18 (12 encoding + 4 output + 2 classical)
-```
-
-**Performance** (40 epochs, 20 samples, 100 shots):
-- **R² Score**: 0.84 (Maintained accuracy with noisy shots)
-- **MSE**: 0.84 (vs baseline 5.37)
-- **Training Time**: **19.3 seconds** (vs 12 minutes previously)
-
-**Optimization Breakthroughs**:
-1. **Parameterized Circuits**: Pre-compiling the circuit once and binding parameters at runtime reduced training time by **97%** (12m → 19s).
-2. **Noise Robustness**: The model trained successfully with only **100 shots** per execution. The momentum-based optimizer ($ \beta=0.8 $) effectively smoothed out the quantum noise, proving the architecture is viable on near-term noisy hardware.
-
-**Path Contributions**:
-- Quantum: mean=0.21, std=0.52 (Captures non-linear cubic "wiggles")
-- Classical: mean=-0.19, std=0.66 (Captures linear trend)
-
-**Key Discovery**: **Data Re-uploading** increases frequency capacity!
-A single encoding layer can only fit simple sine waves. By re-uploading the input $x$ in a second layer, the quantum circuit can generate higher-frequency harmonics (like $\sin(2x)$) needed to approximate the cubic function $x^3$. This jumped R² from 0.49 (1 layer) to 0.84 (2 layers).
-
-![Minimal Hybrid Result](minimal_hybrid_result.png)
-
-The visualization shows:
-- **Top Left**: Training loss convergence over 50 epochs
-- **Top Right**: Model predictions (red) vs actual data (blue) vs true function (green)
-- **Bottom Left**: Decomposition of quantum vs classical path contributions
-- **Bottom Right**: Residuals showing error distribution
-
-### Comparison: Why Phase Kickback Works
-
-| Component | 1Q: Ry-Rx-Ry | 2Q: Standard | **2Q: Kickback** |
-|-----------|--------------|--------------|------------------|
-| Architecture | Independent | Both encoded | Ancilla + control |
-| Entanglement | None | After encoding | During encoding |
-| Quantum variance | 0.125 | 0.007 | **0.790** |
-| R² Score | 0.35 | -0.18 | **0.80** |
-| Params | 10 | 18 | **12** |
-
-The phase kickback architecture provides:
-- **6× more structured quantum output** vs 1-qubit
-- **100× more structured** vs standard 2-qubit CNOT
-- **2.3× better R²** with only 20% more parameters
-
 ---
 
-## Summary and Comparison
+## Citation
 
-Both implementations demonstrate fundamental machine learning concepts built from first principles:
+If you use this code or these concepts in your research, please cite this repository:
 
-### Bayesian Neural Network
-- **Philosophy**: Integration over parameter space (not optimization)
-- **Strength**: Quantifies uncertainty - knows when it's guessing
-- **Method**: MCMC sampling with Metropolis-Hastings
-- **Output**: Distribution of predictions (mean ± std)
-- **Use Case**: High-stakes decisions requiring confidence estimates
-
-### Hybrid Quantum-Classical NN
-- **Philosophy**: Quantum for features, classical for trends
-- **Strength**: Leverages quantum expressiveness in small parameter count
-- **Method**: Parameter shift rule + gradient descent
-- **Output**: Single prediction (deterministic)
-- **Use Case**: Efficient non-linear regression with limited parameters
-
-### Key Takeaways
-
-1. **Data Re-uploading is Essential for Complexity**: To fit cubic functions ($x^3$), you need multiple encoding layers. Each re-uploading adds frequency components to the Fourier series approximation.
-2. **Parameterized Circuits are Critical for Speed**: Re-compiling circuits is a massive bottleneck. Using `qiskit.circuit.Parameter` allows binding values at runtime, speeding up training by orders of magnitude (12m → 19s).
-3. **Quantum ML is Robust to Noise**: Training succeeded with only **100 shots**. The stochastic nature of the optimizer (SGD + Momentum) naturally filters out the shot noise, making this approach feasible for NISQ devices.
-4. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding.
-5. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential.
-6. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
-7. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit.
-8. **Scaling Matters**: Both paths must operate on similar scales for effective training.
-9. **Minimal is Powerful**: 18 parameters (hybrid QNN) achieve 84% R² on cubic data.
-
----
-
-## Files in This Repository
-
-- `simple_bnn_example.py` - Bayesian NN with MCMC sampling
-- `simple_bnn_example.png` - BNN results visualization
-- `minimal_hybrid.py` - Hybrid quantum-classical neural network (heavily commented)
-- `minimal_hybrid_result.png` - Hybrid QNN results visualization
-- `README.md` - This file
+```bibtex
+@software{sawant2025_quantum_classical_nn,
+  title = {Minimal Hybrid Quantum-Classical Neural Network},
+  author = {Sawant, Nilesh}, 
+  year = {2025},
+  url = {https://github.com/nileshsawant/bayesianQC},
+  version={0.1},
+  month={12}
+}
+```
 
 ## Requirements
 
 ```bash
-# For Bayesian NN
-pip install numpy matplotlib
-
-# For Hybrid Quantum-Classical NN
 pip install numpy matplotlib qiskit qiskit-aer
 ```
-
-For GPU acceleration (optional but recommended for quantum circuits):
-```bash
-pip install qiskit-aer-gpu
-```
-
-## References
-
-**Bayesian Neural Networks:**
-- Neal, R. M. (1996). "Bayesian Learning for Neural Networks"
-- Gal, Y. (2016). "Uncertainty in Deep Learning" (PhD Thesis)
-
-**Quantum Machine Learning:**
-- Schuld, M. & Petruccione, F. (2018). "Supervised Learning with Quantum Computers"
-- Cerezo, M. et al. (2021). "Variational Quantum Algorithms" (Nature Reviews Physics)
-- Mitarai, K. et al. (2018). "Quantum Circuit Learning" (Physical Review A)
-
----
-
-*Built with curiosity and `numpy`. No black boxes, just math.*

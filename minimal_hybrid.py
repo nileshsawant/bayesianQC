@@ -11,76 +11,54 @@ Architecture Design:
 -------------------
   Input: x (single scalar, normalized)
   
-  ┌─ QUANTUM PATH ─────────────────────────────────┐
-  │ x → Ry(ax+b) → Rx(cx+d) → Ry(ex+f)            │  6 encoding params
-  │            ↓                                    │
-  │     Measure in Z-basis → P(|0⟩), P(|1⟩)       │
-  │            ↓                                    │
-  │     Output: w_q0·P(|0⟩) + w_q1·P(|1⟩)         │  2 output weights
+  ┌─ QUANTUM PATH (2 Layers) ──────────────────────┐
+  │ Layer 1: Ry(ax+b) → [CNOT] → Rx(cx+d) → Ry(ex+f)
+  │ Layer 2: Ry(gx+h) → [CNOT] → Rx(ix+j) → Ry(kx+l)
+  │            ↓                                    
+  │     Measure in Z-basis → P(|00⟩)...P(|11⟩)      
+  │            ↓                                    
+  │     Output: Σ w_qi · P(|i⟩)                   
   └─────────────────────────────────────────────────┘
   
   ┌─ CLASSICAL PATH ───────────────────────────────┐
-  │ x → tanh(w_c·x + b_c)                          │  2 params
+  │ x → tanh(w_c·x + b_c)                          │
   └─────────────────────────────────────────────────┘
   
   Final Output: quantum_output + classical_output
 
-Total Parameters: 10
-  - 6 quantum encoding (a, b, c, d, e, f)
-  - 2 quantum output weights (w_q0, w_q1)
+Total Parameters: 18
+  - 12 quantum encoding (a..l)
+  - 4 quantum output weights (w_q0..w_q3)
   - 2 classical neuron (w_c, b_c)
 
 Key Design Choices:
 ------------------
-1. **Ry-Rx-Ry gate sequence**: All three rotations affect Z-basis measurement
-   (Note: Rz doesn't affect computational basis measurements!)
+1. **Data Re-uploading**: Input x is encoded twice (2 layers) to capture 
+   higher-frequency components (like cubic functions).
+
+2. **Phase Kickback**: Uses an ancilla qubit in |-⟩ state to create 
+   conditional dynamics during encoding.
    
-2. **Normalized inputs**: Both paths operate on standardized data (mean=0, std=1)
-   ensuring quantum and classical contributions are on similar scales
-   
-3. **Bounded activations**: 
-   - Quantum: Probabilities bounded to [0,1], weighted output bounded
-   - Classical: tanh bounds output to [-1,1]
+3. **Normalized inputs**: Both paths operate on standardized data (mean=0, std=1).
    
 4. **Complementary learning**:
-   - Quantum learns complex, bounded, periodic patterns via rotations
+   - Quantum learns complex, bounded, periodic patterns
    - Classical learns residual linear/smooth trends
    
-5. **Parameter shift rule**: Used for quantum gradients (exact, not finite difference)
-
-Mathematical Background:
------------------------
-For a single qubit with Ry-Rx-Ry rotations:
-  |ψ⟩ = Ry(e·x+f) Rx(c·x+d) Ry(a·x+b) |0⟩
-  
-Measurement probabilities:
-  P(|0⟩) = |⟨0|ψ⟩|²
-  P(|1⟩) = |⟨1|ψ⟩|²
-  
-Quantum output:
-  y_quantum = w_q0·P(|0⟩) + w_q1·P(|1⟩)
-  
-Classical output:
-  y_classical = tanh(w_c·x + b_c)
-  
-Total output:
-  y_pred = y_quantum + y_classical
+5. **Parameter shift rule**: Used for quantum gradients (exact).
 
 Training:
 --------
 - Loss: Mean Squared Error (MSE)
 - Optimizer: Gradient Descent with Momentum (β=0.9)
-- Quantum gradients: Parameter shift rule (shift = π/2)
+- Quantum gradients: Parameter shift rule
 - Classical gradients: Analytical derivatives
-- Gradient clipping: Norm clipped to 1.0 for stability
 
 Performance:
 -----------
-On y = x² + 1 + noise(σ=0.1):
-  - R² ≈ 0.35 with 10 parameters
-  - Quantum contributes structured patterns (std ~ 0.125)
-  - Classical contributes linear trends (std ~ 0.60)
-  - Training time: ~10 min (50 epochs on GPU)
+On y = x³ - x + 1 + noise:
+  - R² ≈ 0.84 with 18 parameters
+  - Training time: ~20 sec (with parameter binding optimization)
 """
 
 import numpy as np
