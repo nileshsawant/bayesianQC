@@ -1,4 +1,4 @@
-# Bayesian and Quantum Neural Networks (from Scratch)
+# Examples for statistical ML: Bayesian and Quantum Neural Networks 
 
 This repository contains minimal implementations of:
 1. **Bayesian Neural Network** (`simple_bnn_example.py`) - Uncertainty quantification using MCMC
@@ -22,7 +22,7 @@ Both implementations are built from scratch using only `numpy` and `qiskit` to d
 
 ---
 
-## Bayesian Neural Network (from Scratch)
+## Bayesian Neural Network 
 
 This repository contains a "bare minimum" implementation of a Bayesian Neural Network (BNN) using only `numpy`. It demonstrates how to perform Bayesian inference on neural network weights without relying on deep learning frameworks like PyTorch or TensorFlow.
 
