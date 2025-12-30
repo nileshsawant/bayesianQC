@@ -125,7 +125,8 @@ class MinimalHybrid:
         # Qubit 1: X → H → [CNOT target] (ancilla in |-⟩ state)
         # Phase kickback: qubit 1's state creates phase on qubit 0
         # Total: 6 encoding parameters (only qubit 0 is parameterized)
-        self.quantum_params = np.random.randn(6) * 0.1  # [a,b,c,d,e,f]
+        # Increased initialization variance (0.1 -> 0.5) to explore broader feature space early
+        self.quantum_params = np.random.randn(6) * 0.5  # [a,b,c,d,e,f]
         
         # Quantum output weights: map 4 basis states to scalar
         # |00⟩, |01⟩, |10⟩, |11⟩ → weighted combination
@@ -340,7 +341,7 @@ class MinimalHybrid:
         return gradient, loss
 
 
-def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9):
+def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9, lr_decay=0.99):
     """
     Train hybrid model using gradient descent with momentum.
     
@@ -373,13 +374,25 @@ def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9):
         epochs: Number of passes through dataset
         lr: Learning rate (step size)
         momentum: Momentum coefficient (β)
+        lr_decay: Learning rate decay factor per epoch (default 0.99)
         
     Returns:
         list: Training losses per epoch
     """
     losses = []
     
+    # Track best model
+    best_loss = float('inf')
+    best_params = {
+        'quantum': model.quantum_params.copy(),
+        'w_q': model.w_q.copy(),
+        'w_c': model.w_c,
+        'b_c': model.b_c
+    }
+    
     print("\nTraining:")
+    current_lr = lr
+    
     for epoch in range(1, epochs + 1):
         epoch_start = time.time()
         total_loss = 0
@@ -403,24 +416,42 @@ def train(model, X_train, y_train, epochs=50, lr=0.05, momentum=0.9):
             # Update all parameters
             # Quantum encoding parameters (6)
             for i in range(6):
-                model.quantum_params[i] -= lr * model.momentum[i]
+                model.quantum_params[i] -= current_lr * model.momentum[i]
             
             # Quantum output weights (4)
             for i in range(4):
-                model.w_q[i] -= lr * model.momentum[6 + i]
+                model.w_q[i] -= current_lr * model.momentum[6 + i]
             
             # Classical parameters (2)
-            model.w_c -= lr * model.momentum[10]
-            model.b_c -= lr * model.momentum[11]
+            model.w_c -= current_lr * model.momentum[10]
+            model.b_c -= current_lr * model.momentum[11]
         
         # Track average loss per epoch
         avg_loss = total_loss / len(X_train)
         losses.append(avg_loss)
         
-        # Print progress every 5 epochs
+        # Save best model
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            best_params['quantum'] = model.quantum_params.copy()
+            best_params['w_q'] = model.w_q.copy()
+            best_params['w_c'] = model.w_c
+            best_params['b_c'] = model.b_c
+            
+        # Decay learning rate
+        current_lr *= lr_decay
+        
+        # Print progress every 10 epochs
         epoch_time = time.time() - epoch_start
-        if epoch % 5 == 0 or epoch == 1:
-            print(f"Epoch {epoch}/{epochs}: Loss = {avg_loss:.4f} ({epoch_time:.1f}s)")
+        if epoch % 10 == 0 or epoch == 1:
+            print(f"Epoch {epoch}/{epochs}: Loss = {avg_loss:.4f} (lr={current_lr:.4f}, {epoch_time:.1f}s)")
+            
+    # Restore best parameters
+    print(f"\nRestoring best model (Loss = {best_loss:.4f})")
+    model.quantum_params = best_params['quantum']
+    model.w_q = best_params['w_q']
+    model.w_c = best_params['w_c']
+    model.b_c = best_params['b_c']
     
     return losses
 
@@ -476,7 +507,10 @@ def main():
     
     # Train
     start_time = time.time()
-    losses = train(model, X_scaled, y_scaled, epochs=50, lr=0.05, momentum=0.9)
+    # Optimized training: 30 epochs with aggressive learning rate decay
+    # Strategy: High initial LR (0.15) to escape plateau, low momentum (0.7) for agility,
+    # fast decay (0.92) to settle quickly.
+    losses = train(model, X_scaled, y_scaled, epochs=30, lr=0.15, momentum=0.7, lr_decay=0.92)
     train_time = time.time() - start_time
     
     # Evaluate

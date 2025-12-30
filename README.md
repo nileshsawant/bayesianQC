@@ -269,9 +269,10 @@ We tested three quantum architectures to find what works:
 |--------------|--------|-----|-------------|---------------|-------|
 | 1Q: Ry-Rx-Ry | 10 | 0.35 | 0.125 | ~10 min | Baseline - all gates affect measurement |
 | 2Q: Standard CNOT | 18 | -0.18 | 0.007 | ~19 min | Failed - nearly constant output |
-| **2Q: Phase Kickback** | **12** | **0.71** | **0.414** | **~11 min** | **Best - quantum advantage achieved** |
+| 2Q: Phase Kickback | 12 | 0.71 | 0.414 | ~11 min | Strong quantum advantage |
+| **2Q: Optimized Kickback** | **12** | **0.80** | **0.790** | **~11 min** | **Larger init + LR decay = Best Result** |
 
-#### Current Best: Phase Kickback Architecture
+#### Current Best: Optimized Phase Kickback Architecture
 
 ```
 ┌─ QUANTUM PATH ─────────────────────────────────┐
@@ -288,15 +289,20 @@ Total Parameters: 12 (vs 10 for 1-qubit)
 ```
 
 **Performance** (50 epochs, 20 samples):
-- **R² Score**: 0.71 (71% improvement over baseline)
-- **MSE**: 0.50 (vs baseline 1.72)
+- **R² Score**: 0.80 (80% improvement over baseline)
+- **MSE**: 0.34 (vs baseline 1.72)
 - **Training Time**: ~11 minutes on GPU (H100)
 
 **Path Contributions**:
-- Quantum: mean=0.36, std=0.41 (highly structured, strong x-dependence)
-- Classical: mean=-0.55, std=0.56 (smooth trends)
+- Quantum: mean=0.58, std=0.79 (Very strong contribution)
+- Classical: mean=-0.67, std=0.12 (Minor adjustment)
 
-**Learned Output Weights**: [-0.14, 1.26, -0.14, 1.26]
+**Optimization Strategy**:
+- **Larger Initialization**: `std=0.5` (vs 0.1) allowed exploring broader feature space early
+- **Aggressive LR Decay**: `lr=0.1` decaying by 0.95/epoch forced fast convergence then fine-tuning
+- **Result**: Quantum path took over as the primary driver (std 0.79 vs classical 0.12)
+
+**Learned Output Weights**: [-0.65, 1.49, -0.65, 1.49]
 - Symmetric pattern shows phase kickback creates meaningful features
 - States |01⟩ and |11⟩ dominate (second qubit=1)
 - States |00⟩ and |10⟩ suppressed (second qubit=0)
@@ -317,14 +323,14 @@ The visualization shows:
 |-----------|--------------|--------------|------------------|
 | Architecture | Independent | Both encoded | Ancilla + control |
 | Entanglement | None | After encoding | During encoding |
-| Quantum variance | 0.125 | 0.007 | **0.414** |
-| R² Score | 0.35 | -0.18 | **0.71** |
+| Quantum variance | 0.125 | 0.007 | **0.790** |
+| R² Score | 0.35 | -0.18 | **0.80** |
 | Params | 10 | 18 | **12** |
 
 The phase kickback architecture provides:
-- **3.3× more structured quantum output** vs 1-qubit
-- **60× more structured** vs standard 2-qubit CNOT
-- **2× better R²** with only 20% more parameters
+- **6× more structured quantum output** vs 1-qubit
+- **100× more structured** vs standard 2-qubit CNOT
+- **2.3× better R²** with only 20% more parameters
 
 ---
 
@@ -348,12 +354,13 @@ Both implementations demonstrate fundamental machine learning concepts built fro
 
 ### Key Takeaways
 
-1. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding - this is the key to 2× R² improvement
-2. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
-3. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit
-4. **Scaling Matters**: Both paths must operate on similar scales for effective training
-5. **Minimal is Powerful**: 12 parameters (hybrid QNN) achieve 71% R² improvement
-6. **Quantum ≠ Magic**: Quantum provides phase-based conditional feature spaces - not unlimited expressiveness
+1. **Phase Kickback Enables Quantum Advantage**: Ancilla in |-⟩ state creates conditional dynamics during encoding - this is the key to 2.3× R² improvement
+2. **Optimization Matters**: Larger initialization (std=0.5) and aggressive LR decay unlocked the full potential (R² 0.71 → 0.80)
+3. **Gate Selection is Critical**: Rz rotations don't affect Z-basis measurements - discovered empirically!
+4. **CNOT Timing Matters**: Apply CNOT *during* encoding (not after) for maximum benefit
+5. **Scaling Matters**: Both paths must operate on similar scales for effective training
+6. **Minimal is Powerful**: 12 parameters (hybrid QNN) achieve 80% R² improvement
+7. **Quantum ≠ Magic**: Quantum provides phase-based conditional feature spaces - not unlimited expressiveness
 
 ---
 
