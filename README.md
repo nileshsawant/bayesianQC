@@ -37,6 +37,8 @@ This repository contains a "bare minimum" implementation of a Bayesian Neural Ne
 python simple_bnn_example.py
 ```
 
+![Bayesian Neural Network Result](simple_bnn_example.png)
+
 ---
 
 ## Hybrid Quantum-Classical Neural Network (`minimal_hybrid.py`)
@@ -93,6 +95,8 @@ $$ \frac{\partial L}{\partial \theta} = \frac{L(\theta + \pi/2) - L(\theta - \pi
 ```bash
 python minimal_hybrid.py
 ```
+
+![Hybrid QNN Result](minimal_hybrid_result.png)
 
 ---
 
